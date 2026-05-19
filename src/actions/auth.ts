@@ -1,10 +1,17 @@
 'use server'
 
 import { getIronSession } from 'iron-session'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { generateNonce, SiweMessage } from 'siwe'
 import { sessionOptions, SessionData, SESSION_TTL } from '@/lib/session'
 import { supabaseAdmin } from '@/lib/supabase/admin'
+
+// Pull the request's actual host (honoring proxy headers) so SIWE verification
+// can be bound to this origin — defeats cross-domain signature replay.
+async function getRequestHost(): Promise<string | undefined> {
+  const h = await headers()
+  return h.get('x-forwarded-host') ?? h.get('host') ?? undefined
+}
 
 // ─── Helpers ───
 
@@ -47,13 +54,23 @@ export async function generateSiweNonce(): Promise<string> {
 export async function verifySiweMessage(message: string, signature: string) {
   const session = await getIronSessionInstance()
 
+  if (!session.nonce) {
+    return { success: false, error: 'No active nonce' }
+  }
+
   try {
     const siweMessage = new SiweMessage(message)
-    const { data } = await siweMessage.verify({ signature })
-
-    if (data.nonce !== session.nonce) {
-      return { success: false, error: 'Invalid nonce' }
-    }
+    const expectedDomain = await getRequestHost()
+    const { data } = await siweMessage.verify({
+      signature,
+      // Binds the signature to this origin, the session-issued nonce, and
+      // the current time. siwe throws on any mismatch (including expired
+      // `expirationTime` or not-yet-valid `notBefore`); the catch below
+      // covers it.
+      domain: expectedDomain,
+      nonce: session.nonce,
+      time: new Date().toISOString(),
+    })
 
     const userAddress = data.address.toLowerCase()
 

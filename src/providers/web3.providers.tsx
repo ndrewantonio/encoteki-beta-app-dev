@@ -20,7 +20,7 @@ const config = defaultConfig({
   }),
   walletConnectProjectId,
   xellarAppId,
-  xellarEnv: 'sandbox',
+  xellarEnv: 'production',
   // Only load production chains to reduce initial load
   chains: [base, arbitrum, lisk, manta],
 }) as Config
